@@ -1,12 +1,3 @@
-import subprocess
-import sys
-
-# Instalación con permisos de usuario (--user)
-try:
-    import openpyxl
-except ImportError:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "openpyxl"])
-
 import streamlit as st
 import pandas as pd
 
