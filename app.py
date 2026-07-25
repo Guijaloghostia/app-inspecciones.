@@ -2,129 +2,183 @@ import streamlit as st
 import pandas as pd
 import os
 
-st.set_page_config(page_title="Control de Refiscalización", layout="wide")
+st.set_page_config(page_title="Control de Refiscalización", layout="wide", initial_sidebar_state="expanded")
 
-st.title("📊 Panel Interactivo de Refiscalización")
+# --- ESTILOS CSS INTERACTIVOS ---
+st.markdown("""
+    <style>
+    .metric-card {
+        background-color: #f8f9fa;
+        border-left: 5px solid #d9534f;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        margin-bottom: 10px;
+    }
+    .stButton>button {
+        width: 100%;
+        background-color: #d9534f;
+        color: white;
+        border-radius: 6px;
+        font-weight: bold;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-# Nombre exacto de tu archivo Excel en GitHub
 DEFAULT_FILE = "1 - BASE PARA REFISCALIZAR 1er Y 2do TRIMESTRE 2025 cruzado al 3-9-25.xlsx"
 
-st.sidebar.header("📁 Carga de Datos")
-uploaded_file = st.sidebar.file_uploader("Subir un Excel alternativo (Opcional)", type=["xlsx", "xls"])
+# --- NAVEGACIÓN PRINCIPAL ---
+st.sidebar.title("📌 Menú Principal")
+opcion = st.sidebar.radio("Ir a:", [
+    "🏠 Dashboard General",
+    "🔍 Consultar Ficha por Local",
+    "🔴 Tablero de Prioridades",
+    "🗺️ Mapa de Control",
+    "⚙️ Carga y Configuración"
+])
 
-file_to_load = None
+# --- FUNCIÓN CARGA DE DATOS ---
+@st.cache_data
+def cargar_datos(file_path):
+    df = pd.read_excel(file_path, sheet_name='TOTAL', engine='openpyxl')
+    df.columns = df.columns.str.strip()
+    
+    for col in ['TREL', 'TNR', 'TRAI', 'Latitud', 'Longitud']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-if uploaded_file is not None:
-    file_to_load = uploaded_file
-    st.sidebar.success("Usando archivo subido manualmente")
-elif os.path.exists(DEFAULT_FILE):
-    file_to_load = DEFAULT_FILE
-    st.sidebar.info("Usando base de datos predeterminada")
-else:
-    st.sidebar.warning(f"⚠️ No se encontró el archivo '{DEFAULT_FILE}'. Subí un archivo para comenzar.")
+    df['Calle'] = df['Calle'].astype(str).str.strip()
+    if 'Núm.' in df.columns:
+        df['Núm_Clean'] = df['Núm.'].fillna('').astype(str).str.replace('.0', '', regex=False).str.strip()
+        df['Direccion_Corta'] = df['Calle'] + " " + df['Núm_Clean']
+    else:
+        df['Direccion_Corta'] = df['Calle']
 
-if file_to_load is not None:
+    if 'Fecha' in df.columns:
+        df['Fecha_Clean'] = pd.to_datetime(df['Fecha'], errors='coerce')
+    else:
+        df['Fecha_Clean'] = pd.NaT
+
+    agg_dict = {
+        'Cant_Inspecciones': ('Calle', 'count'),
+        'Total_TREL': ('TREL', 'sum') if 'TREL' in df.columns else ('Calle', 'count'),
+        'Total_TNR': ('TNR', 'sum') if 'TNR' in df.columns else ('Calle', 'count'),
+        'Ultima_Inspeccion': ('Fecha_Clean', 'max')
+    }
+
+    if 'Latitud' in df.columns: agg_dict['Latitud'] = ('Latitud', 'mean')
+    if 'Longitud' in df.columns: agg_dict['Longitud'] = ('Longitud', 'mean')
+
+    resumen = df.groupby('Direccion_Corta').agg(**agg_dict).reset_index()
+    resumen['% Informalidad'] = ((resumen['Total_TNR'] / resumen['Total_TREL'].replace(0, 1)) * 100).round(1)
+    
+    # Semáforo de Prioridad
+    def asignar_prioridad(row):
+        if row['Cant_Inspecciones'] == 1 and row['% Informalidad'] > 50:
+            return "🔴 ALTA (Urgente Refiscalizar)"
+        elif row['Cant_Inspecciones'] <= 2:
+            return "🟡 MEDIA (Control Periódico)"
+        else:
+            return "🟢 BAJA (Al día)"
+            
+    resumen['Prioridad'] = resumen.apply(asignar_prioridad, axis=1)
+    return df, resumen
+
+df_raw, resumen = None, None
+
+if os.path.exists(DEFAULT_FILE):
     try:
-        df = pd.read_excel(file_to_load, sheet_name='TOTAL', engine='openpyxl')
-        df.columns = df.columns.str.strip()
+        df_raw, resumen = cargar_datos(DEFAULT_FILE)
+    except Exception as e:
+        st.error(f"Error cargando base: {e}")
 
-        # Limpieza de columnas numéricas
-        for col in ['TREL', 'TNR', 'TRAI', 'Latitud', 'Longitud']:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+if resumen is not None:
 
-        df['Calle'] = df['Calle'].astype(str).str.strip()
-        
-        if 'Núm.' in df.columns:
-            df['Núm_Clean'] = df['Núm.'].fillna('').astype(str).str.replace('.0', '', regex=False).str.strip()
-            df['Direccion_Corta'] = df['Calle'] + " " + df['Núm_Clean']
-        else:
-            df['Direccion_Corta'] = df['Calle']
+    # --- SECCIÓN 1: DASHBOARD GENERAL ---
+    if opcion == "🏠 Dashboard General":
+        st.title("📊 Panel de Control e Inspecciones")
+        st.caption("Visión sintética de la tasa de informalidad e inspecciones en calle.")
 
-        if 'Fecha' in df.columns:
-            df['Fecha_Clean'] = pd.to_datetime(df['Fecha'], errors='coerce')
-        else:
-            df['Fecha_Clean'] = pd.NaT
-
-        # Agregaciones seguras
-        agg_dict = {
-            'Cant_Inspecciones': ('Calle', 'count'),
-            'Total_TREL': ('TREL', 'sum') if 'TREL' in df.columns else ('Calle', 'count'),
-            'Total_TNR': ('TNR', 'sum') if 'TNR' in df.columns else ('Calle', 'count'),
-            'Ultima_Inspeccion': ('Fecha_Clean', 'max')
-        }
-
-        if 'Latitud' in df.columns:
-            agg_dict['Latitud'] = ('Latitud', 'mean')
-        if 'Longitud' in df.columns:
-            agg_dict['Longitud'] = ('Longitud', 'mean')
-
-        resumen = df.groupby('Direccion_Corta').agg(**agg_dict).reset_index()
-        resumen['% Informalidad'] = ((resumen['Total_TNR'] / resumen['Total_TREL'].replace(0, 1)) * 100).round(1)
-
-        # --- SECCIÓN 1: METRICAS CLAVE ---
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Locales", len(resumen))
-        col2.metric("Total Inspecciones", resumen['Cant_Inspecciones'].sum())
-        col3.metric("Prom. Informalidad", f"{resumen['% Informalidad'].mean():.1f}%")
-        col4.metric("Locales Críticos (>50% Inf.)", len(resumen[resumen['% Informalidad'] > 50]))
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Totales Locales", len(resumen))
+        c2.metric("Total Inspecciones", resumen['Cant_Inspecciones'].sum())
+        c3.metric("Prom. Informalidad", f"{resumen['% Informalidad'].mean():.1f}%")
+        c4.metric("Urgentes Refiscalizar", len(resumen[resumen['Prioridad'].str.contains("ALTA")]))
 
         st.divider()
+        col_left, col_right = st.columns(2)
+        with col_left:
+            st.subheader("Distribución por Prioridad de Control")
+            st.bar_chart(resumen['Prioridad'].value_counts())
+        with col_right:
+            st.subheader("Top 10 Zonas con Mayor Informalidad")
+            top_inf = resumen.sort_values(by='% Informalidad', ascending=False).head(10)
+            st.dataframe(top_inf[['Direccion_Corta', '% Informalidad', 'Cant_Inspecciones']], use_container_width=True)
 
-        # --- SECCIÓN 2: FILTROS INTERACTIVOS ---
-        st.sidebar.header("🔍 Filtros de Búsqueda")
+    # --- SECCIÓN 2: CONSULTAR FICHA POR LOCAL ---
+    elif opcion == "🔍 Consultar Ficha por Local":
+        st.title("🔍 Buscador Interactivo de Comercio")
         
-        filtro_calle = st.sidebar.text_input("Buscar por Calle / Dirección:")
-        min_insp, max_insp = st.sidebar.slider(
-            "Rango de Inspecciones:",
-            int(resumen['Cant_Inspecciones'].min()),
-            int(resumen['Cant_Inspecciones'].max()),
-            (int(resumen['Cant_Inspecciones'].min()), int(resumen['Cant_Inspecciones'].max()))
+        busqueda = st.selectbox("Seleccioná o buscá una dirección:", [""] + list(resumen['Direccion_Corta'].unique()))
+        
+        if busqueda:
+            local = resumen[resumen['Direccion_Corta'] == busqueda].iloc[0]
+            st.success(f"📍 Ficha de Local: **{local['Direccion_Corta']}**")
+            
+            f1, f2, f3, f4 = st.columns(4)
+            f1.metric("Cant. Inspecciones", local['Cant_Inspecciones'])
+            f2.metric("Informalidad", f"{local['% Informalidad']}%")
+            f3.metric("Última Inspección", str(local['Ultima_Inspeccion'])[:10] if pd.notnull(local['Ultima_Inspeccion']) else "S/D")
+            f4.metric("Estado", local['Prioridad'].split(" ")[0])
+
+            st.divider()
+            st.subheader("📋 Historial de Inspecciones Registradas")
+            historial = df_raw[df_raw['Direccion_Corta'] == busqueda]
+            st.dataframe(historial, use_container_width=True)
+
+    # --- SECCIÓN 3: TABLERO DE PRIORIDADES ---
+    elif opcion == "🔴 Tablero de Prioridades":
+        st.title("🔴 Tablero de Refiscalización Prioritaria")
+        
+        prio_filtro = st.multiselect(
+            "Filtrar por Nivel de Prioridad:",
+            options=list(resumen['Prioridad'].unique()),
+            default=list(resumen['Prioridad'].unique())
+        )
+        
+        res_filtrado = resumen[resumen['Prioridad'].isin(prio_filtro)]
+        st.dataframe(
+            res_filtrado.sort_values(by=['% Informalidad', 'Cant_Inspecciones'], ascending=[False, True]),
+            use_container_width=True
         )
 
-        df_filtrado = resumen[
-            (resumen['Cant_Inspecciones'] >= min_insp) & 
-            (resumen['Cant_Inspecciones'] <= max_insp)
-        ]
-        if filtro_calle:
-            df_filtrado = df_filtrado[df_filtrado['Direccion_Corta'].str.contains(filtro_calle, case=False, na=False)]
-
-        # --- SECCIÓN 3: MAPA DE CALOR (SI EXISTEN COORDENADAS) ---
-        if 'Latitud' in df_filtrado.columns and 'Longitud' in df_filtrado.columns:
+    # --- SECCIÓN 4: MAPA DE CONTROL ---
+    elif opcion == "🗺️ Mapa de Control":
+        st.title("🗺️ Ubicación de Inspecciones")
+        if 'Latitud' in resumen.columns and 'Longitud' in resumen.columns:
             try:
                 import folium
                 from folium.plugins import HeatMap
                 from streamlit_folium import st_folium
 
-                st.subheader("🗺️ Mapa de Calor de Inspecciones / Informalidad")
-                map_data = df_filtrado[(df_filtrado['Latitud'] != 0) & (df_filtrado['Longitud'] != 0)]
-
+                map_data = resumen[(resumen['Latitud'] != 0) & (resumen['Longitud'] != 0)]
                 if not map_data.empty:
-                    centro_lat = map_data['Latitud'].mean()
-                    centro_lon = map_data['Longitud'].mean()
-                    m = folium.Map(location=[centro_lat, centro_lon], zoom_start=13)
-                    heat_data = [[row['Latitud'], row['Longitud'], row['% Informalidad']] for _, row in map_data.iterrows()]
+                    m = folium.Map(location=[map_data['Latitud'].mean(), map_data['Longitud'].mean()], zoom_start=13)
+                    heat_data = [[r['Latitud'], r['Longitud'], r['% Informalidad']] for _, r in map_data.iterrows()]
                     HeatMap(heat_data, radius=15).add_to(m)
-                    st_folium(m, width=1000, height=450)
+                    st_folium(m, width=1000, height=500)
+                else:
+                    st.info("No hay coordenadas para graficar en el mapa.")
             except ImportError:
-                pass
+                st.warning("Instalá folium y streamlit-folium para ver el mapa.")
+        else:
+            st.info("El archivo actual no posee datos de Latitud y Longitud.")
 
-        st.divider()
-
-        # --- SECCIÓN 4: TABLAS INTERACTIVAS ---
-        tab1, tab2 = st.tabs(["🔴 Prioridad de Control (Menos Inspeccionados)", "🟢 Ranking de Inspeccionados"])
-
-        with tab1:
-            st.dataframe(
-                df_filtrado.sort_values(by=['Cant_Inspecciones', 'Ultima_Inspeccion'], ascending=[True, True]),
-                use_container_width=True
-            )
-
-        with tab2:
-            st.dataframe(
-                df_filtrado.sort_values(by='Cant_Inspecciones', ascending=False),
-                use_container_width=True
-            )
-
-    except Exception as e:
-        st.error(f"Error al procesar el archivo Excel: {e}")
+    # --- SECCIÓN 5: CARGA Y CONFIGURACIÓN ---
+    elif opcion == "⚙️ Carga y Configuración":
+        st.title("⚙️ Carga y Actualización de Archivos")
+        up = st.file_uploader("Subí un nuevo Excel para actualizar el sistema", type=["xlsx", "xls"])
+        if up is not None:
+            st.success("Archivo subido correctamente. Para reemplazar el predeterminado, guardalo en GitHub.")
+else:
+    st.warning("Esperando carga de base de datos...")
