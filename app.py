@@ -1,13 +1,10 @@
 import streamlit as st
 import pandas as pd
-import folium
-from folium.plugins import HeatMap
-from streamlit_folium import st_folium
 
 st.set_page_config(page_title="Control de Refiscalización", layout="wide")
 
 st.title("📊 Panel Interactivo de Refiscalización")
-st.write("Subí el archivo Excel para activar el mapa y los tableros de control.")
+st.write("Subí el archivo Excel para activar los tableros de control.")
 
 uploaded_file = st.file_uploader("Cargar archivo Excel", type=["xlsx", "xls"])
 
@@ -16,7 +13,7 @@ if uploaded_file is not None:
         df = pd.read_excel(uploaded_file, sheet_name='TOTAL', engine='openpyxl')
         df.columns = df.columns.str.strip()
 
-        # Limpieza de datos
+        # Limpieza de columnas numéricas existentes
         for col in ['TREL', 'TNR', 'TRAI', 'Latitud', 'Longitud']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -30,15 +27,20 @@ if uploaded_file is not None:
         else:
             df['Fecha_Clean'] = pd.NaT
 
-        # Agrupación por local/dirección
-        resumen = df.groupby('Direccion_Corta').agg(
-            Cant_Inspecciones=('Calle', 'count'),
-            Total_TREL=('TREL', 'sum'),
-            Total_TNR=('TNR', 'sum'),
-            Ultima_Inspeccion=('Fecha_Clean', 'max'),
-            Latitud=('Latitud', 'mean'),
-            Longitud=('Longitud', 'mean')
-        ).reset_index()
+        # Definir agregaciones seguras según las columnas disponibles
+        agg_dict = {
+            'Cant_Inspecciones': ('Calle', 'count'),
+            'Total_TREL': ('TREL', 'sum') if 'TREL' in df.columns else ('Calle', 'count'),
+            'Total_TNR': ('TNR', 'sum') if 'TNR' in df.columns else ('Calle', 'count'),
+            'Ultima_Inspeccion': ('Fecha_Clean', 'max')
+        }
+
+        if 'Latitud' in df.columns:
+            agg_dict['Latitud'] = ('Latitud', 'mean')
+        if 'Longitud' in df.columns:
+            agg_dict['Longitud'] = ('Longitud', 'mean')
+
+        resumen = df.groupby('Direccion_Corta').agg(**agg_dict).reset_index()
 
         resumen['% Informalidad'] = ((resumen['Total_TNR'] / resumen['Total_TREL'].replace(0, 1)) * 100).round(1)
 
@@ -70,39 +72,33 @@ if uploaded_file is not None:
         if filtro_calle:
             df_filtrado = df_filtrado[df_filtrado['Direccion_Corta'].str.contains(filtro_calle, case=False, na=False)]
 
-        # --- SECCIÓN 3: MAPA DE CALOR INTERACTIVO ---
-        st.subheader("🗺️ Mapa de Calor de Inspecciones / Informalidad")
-        
-        # Filtrar registros con coordenadas válidas (si existen en el Excel)
-        map_data = df_filtrado[(df_filtrado['Latitud'] != 0) & (df_filtrado['Longitud'] != 0)]
+        # --- SECCIÓN 3: MAPA INTERACTIVO (SOLO SI EXISTEN COORDENADAS) ---
+        if 'Latitud' in df_filtrado.columns and 'Longitud' in df_filtrado.columns:
+            try:
+                import folium
+                from folium.plugins import HeatMap
+                from streamlit_folium import st_folium
 
-        if not map_data.empty:
-            centro_lat = map_data['Latitud'].mean()
-            centro_lon = map_data['Longitud'].mean()
-            
-            m = folium.Map(location=[centro_lat, centro_lon], zoom_start=13)
-            
-            # Puntos de calor ponderados por porcentaje de informalidad o cantidad
-            heat_data = [[row['Latitud'], row['Longitud'], row['% Informalidad']] for _, row in map_data.iterrows()]
-            HeatMap(heat_data, radius=15).add_to(m)
+                st.subheader("🗺️ Mapa de Calor de Inspecciones / Informalidad")
+                map_data = df_filtrado[(df_filtrado['Latitud'] != 0) & (df_filtrado['Longitud'] != 0)]
 
-            # Marcadores individuales
-            for _, row in map_data.iterrows():
-                folium.CircleMarker(
-                    location=[row['Latitud'], row['Longitud']],
-                    radius=5,
-                    popup=f"<b>{row['Direccion_Corta']}</b><br>Inspecciones: {row['Cant_Inspecciones']}<br>Informalidad: {row['% Informalidad']}%",
-                    color='red' if row['% Informalidad'] > 50 else 'blue',
-                    fill=True
-                ).add_to(m)
-
-            st_folium(m, width=1000, height=450)
+                if not map_data.empty:
+                    centro_lat = map_data['Latitud'].mean()
+                    centro_lon = map_data['Longitud'].mean()
+                    m = folium.Map(location=[centro_lat, centro_lon], zoom_start=13)
+                    heat_data = [[row['Latitud'], row['Longitud'], row['% Informalidad']] for _, row in map_data.iterrows()]
+                    HeatMap(heat_data, radius=15).add_to(m)
+                    st_folium(m, width=1000, height=450)
+                else:
+                    st.info("ℹ️ No hay coordenadas válidas para mostrar en el mapa.")
+            except ImportError:
+                st.info("ℹ️ Para habilitar el mapa, asegurate de tener 'folium' en requirements.txt.")
         else:
-            st.info("ℹ️ Para desplegar el mapa interactivo, asegurate de incluir columnas de 'Latitud' y 'Longitud' en el Excel.")
+            st.info("ℹ️ Para mostrar el mapa de calor, el Excel debe incluir las columnas 'Latitud' y 'Longitud'.")
 
         st.divider()
 
-        # --- SECCIÓN 4: TABLAS Y RANKINGS ---
+        # --- SECCIÓN 4: TABLAS INTERACTIVAS ---
         tab1, tab2 = st.tabs(["🔴 Prioridad de Control (Menos Inspeccionados)", "🟢 Ranking de Inspeccionados"])
 
         with tab1:
