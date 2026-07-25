@@ -1,3 +1,11 @@
+import subprocess
+import sys
+
+try:
+    import openpyxl
+except ImportError:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])
+
 import streamlit as st
 import pandas as pd
 
@@ -10,12 +18,7 @@ uploaded_file = st.file_uploader("Cargar archivo Excel", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        # Intenta leer con openpyxl o motor por defecto
-        try:
-            df = pd.read_excel(uploaded_file, sheet_name='TOTAL', engine='openpyxl')
-        except:
-            df = pd.read_excel(uploaded_file, sheet_name='TOTAL')
-
+        df = pd.read_excel(uploaded_file, sheet_name='TOTAL', engine='openpyxl')
         df.columns = df.columns.str.strip()
 
         for col in ['TREL', 'TNR', 'TRAI']:
