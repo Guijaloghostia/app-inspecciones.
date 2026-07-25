@@ -10,7 +10,12 @@ uploaded_file = st.file_uploader("Cargar archivo Excel", type=["xlsx", "xls"])
 
 if uploaded_file is not None:
     try:
-        df = pd.read_excel(uploaded_file, sheet_name='TOTAL')
+        # Intenta leer con openpyxl o motor por defecto
+        try:
+            df = pd.read_excel(uploaded_file, sheet_name='TOTAL', engine='openpyxl')
+        except:
+            df = pd.read_excel(uploaded_file, sheet_name='TOTAL')
+
         df.columns = df.columns.str.strip()
 
         for col in ['TREL', 'TNR', 'TRAI']:
