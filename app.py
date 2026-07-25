@@ -6,43 +6,47 @@ st.set_page_config(page_title="Control de Refiscalización", layout="wide")
 
 st.title("📊 Panel Interactivo de Refiscalización")
 
-# Cargar archivo predeterminado o uno nuevo subido por el usuario
-DEFAULT_FILE = "datos.xlsx"
+# Nombre exacto de tu archivo Excel en GitHub
+DEFAULT_FILE = "1 - BASE PARA REFISCALIZAR 1er Y 2do TRIMESTRE 2025 cruzado al 3-9-25.xlsx"
 
 st.sidebar.header("📁 Carga de Datos")
-uploaded_file = st.sidebar.file_uploader("Actualizar archivo Excel (Opcional)", type=["xlsx", "xls"])
+uploaded_file = st.sidebar.file_uploader("Subir un Excel alternativo (Opcional)", type=["xlsx", "xls"])
 
 file_to_load = None
 
 if uploaded_file is not None:
     file_to_load = uploaded_file
-    st.sidebar.success(" Usando archivo subido temporalmente")
+    st.sidebar.success("Usando archivo subido manualmente")
 elif os.path.exists(DEFAULT_FILE):
     file_to_load = DEFAULT_FILE
-    st.sidebar.info(" Usando base de datos predeterminada")
+    st.sidebar.info("Usando base de datos predeterminada")
 else:
-    st.warning("⚠️ Por favor, subí un archivo Excel para comenzar o guardá 'datos.xlsx' en el repositorio.")
+    st.sidebar.warning(f"⚠️ No se encontró el archivo '{DEFAULT_FILE}'. Subí un archivo para comenzar.")
 
 if file_to_load is not None:
     try:
         df = pd.read_excel(file_to_load, sheet_name='TOTAL', engine='openpyxl')
         df.columns = df.columns.str.strip()
 
-        # Limpieza de columnas numéricas existentes
+        # Limpieza de columnas numéricas
         for col in ['TREL', 'TNR', 'TRAI', 'Latitud', 'Longitud']:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
         df['Calle'] = df['Calle'].astype(str).str.strip()
-        df['Núm_Clean'] = df['Núm.'].fillna('').astype(str).str.replace('.0', '', regex=False).str.strip()
-        df['Direccion_Corta'] = df['Calle'] + " " + df['Núm_Clean']
+        
+        if 'Núm.' in df.columns:
+            df['Núm_Clean'] = df['Núm.'].fillna('').astype(str).str.replace('.0', '', regex=False).str.strip()
+            df['Direccion_Corta'] = df['Calle'] + " " + df['Núm_Clean']
+        else:
+            df['Direccion_Corta'] = df['Calle']
 
         if 'Fecha' in df.columns:
             df['Fecha_Clean'] = pd.to_datetime(df['Fecha'], errors='coerce')
         else:
             df['Fecha_Clean'] = pd.NaT
 
-        # Definir agregaciones seguras
+        # Agregaciones seguras
         agg_dict = {
             'Cant_Inspecciones': ('Calle', 'count'),
             'Total_TREL': ('TREL', 'sum') if 'TREL' in df.columns else ('Calle', 'count'),
@@ -78,7 +82,6 @@ if file_to_load is not None:
             (int(resumen['Cant_Inspecciones'].min()), int(resumen['Cant_Inspecciones'].max()))
         )
 
-        # Aplicar filtros
         df_filtrado = resumen[
             (resumen['Cant_Inspecciones'] >= min_insp) & 
             (resumen['Cant_Inspecciones'] <= max_insp)
@@ -86,7 +89,7 @@ if file_to_load is not None:
         if filtro_calle:
             df_filtrado = df_filtrado[df_filtrado['Direccion_Corta'].str.contains(filtro_calle, case=False, na=False)]
 
-        # --- SECCIÓN 3: MAPA INTERACTIVO (SI EXISTEN COORDENADAS) ---
+        # --- SECCIÓN 3: MAPA DE CALOR (SI EXISTEN COORDENADAS) ---
         if 'Latitud' in df_filtrado.columns and 'Longitud' in df_filtrado.columns:
             try:
                 import folium
@@ -124,4 +127,4 @@ if file_to_load is not None:
             )
 
     except Exception as e:
-        st.error(f"Error al procesar el archivo: {e}")
+        st.error(f"Error al procesar el archivo Excel: {e}")
