@@ -1,16 +1,31 @@
 import streamlit as st
 import pandas as pd
+import os
 
 st.set_page_config(page_title="Control de Refiscalización", layout="wide")
 
 st.title("📊 Panel Interactivo de Refiscalización")
-st.write("Subí el archivo Excel para activar los tableros de control.")
 
-uploaded_file = st.file_uploader("Cargar archivo Excel", type=["xlsx", "xls"])
+# Cargar archivo predeterminado o uno nuevo subido por el usuario
+DEFAULT_FILE = "datos.xlsx"
+
+st.sidebar.header("📁 Carga de Datos")
+uploaded_file = st.sidebar.file_uploader("Actualizar archivo Excel (Opcional)", type=["xlsx", "xls"])
+
+file_to_load = None
 
 if uploaded_file is not None:
+    file_to_load = uploaded_file
+    st.sidebar.success(" Usando archivo subido temporalmente")
+elif os.path.exists(DEFAULT_FILE):
+    file_to_load = DEFAULT_FILE
+    st.sidebar.info(" Usando base de datos predeterminada")
+else:
+    st.warning("⚠️ Por favor, subí un archivo Excel para comenzar o guardá 'datos.xlsx' en el repositorio.")
+
+if file_to_load is not None:
     try:
-        df = pd.read_excel(uploaded_file, sheet_name='TOTAL', engine='openpyxl')
+        df = pd.read_excel(file_to_load, sheet_name='TOTAL', engine='openpyxl')
         df.columns = df.columns.str.strip()
 
         # Limpieza de columnas numéricas existentes
@@ -27,7 +42,7 @@ if uploaded_file is not None:
         else:
             df['Fecha_Clean'] = pd.NaT
 
-        # Definir agregaciones seguras según las columnas disponibles
+        # Definir agregaciones seguras
         agg_dict = {
             'Cant_Inspecciones': ('Calle', 'count'),
             'Total_TREL': ('TREL', 'sum') if 'TREL' in df.columns else ('Calle', 'count'),
@@ -41,7 +56,6 @@ if uploaded_file is not None:
             agg_dict['Longitud'] = ('Longitud', 'mean')
 
         resumen = df.groupby('Direccion_Corta').agg(**agg_dict).reset_index()
-
         resumen['% Informalidad'] = ((resumen['Total_TNR'] / resumen['Total_TREL'].replace(0, 1)) * 100).round(1)
 
         # --- SECCIÓN 1: METRICAS CLAVE ---
@@ -72,7 +86,7 @@ if uploaded_file is not None:
         if filtro_calle:
             df_filtrado = df_filtrado[df_filtrado['Direccion_Corta'].str.contains(filtro_calle, case=False, na=False)]
 
-        # --- SECCIÓN 3: MAPA INTERACTIVO (SOLO SI EXISTEN COORDENADAS) ---
+        # --- SECCIÓN 3: MAPA INTERACTIVO (SI EXISTEN COORDENADAS) ---
         if 'Latitud' in df_filtrado.columns and 'Longitud' in df_filtrado.columns:
             try:
                 import folium
@@ -89,12 +103,8 @@ if uploaded_file is not None:
                     heat_data = [[row['Latitud'], row['Longitud'], row['% Informalidad']] for _, row in map_data.iterrows()]
                     HeatMap(heat_data, radius=15).add_to(m)
                     st_folium(m, width=1000, height=450)
-                else:
-                    st.info("ℹ️ No hay coordenadas válidas para mostrar en el mapa.")
             except ImportError:
-                st.info("ℹ️ Para habilitar el mapa, asegurate de tener 'folium' en requirements.txt.")
-        else:
-            st.info("ℹ️ Para mostrar el mapa de calor, el Excel debe incluir las columnas 'Latitud' y 'Longitud'.")
+                pass
 
         st.divider()
 
