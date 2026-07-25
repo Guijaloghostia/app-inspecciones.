@@ -31,6 +31,7 @@ DEFAULT_FILE = "1 - BASE PARA REFISCALIZAR 1er Y 2do TRIMESTRE 2025 cruzado al 3
 st.sidebar.title("📌 Menú Principal")
 opcion = st.sidebar.radio("Ir a:", [
     "🏠 Dashboard General",
+    "🛣️ Análisis por Calle / Cuadra",
     "🔍 Consultar Ficha por Local",
     "🔴 Tablero de Prioridades",
     "🗺️ Mapa de Control",
@@ -48,10 +49,16 @@ def cargar_datos(file_path):
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
     df['Calle'] = df['Calle'].astype(str).str.strip()
+    
+    # Extraer la altura numérica para calcular la cuadra (altura al 100)
     if 'Núm.' in df.columns:
+        df['Num_Val'] = pd.to_numeric(df['Núm.'], errors='coerce').fillna(0).astype(int)
+        df['Cuadra'] = (df['Num_Val'] // 100) * 100
+        df['Cuadra_Texto'] = df['Calle'] + " al " + df['Cuadra'].astype(str)
         df['Núm_Clean'] = df['Núm.'].fillna('').astype(str).str.replace('.0', '', regex=False).str.strip()
         df['Direccion_Corta'] = df['Calle'] + " " + df['Núm_Clean']
     else:
+        df['Cuadra_Texto'] = df['Calle']
         df['Direccion_Corta'] = df['Calle']
 
     if 'Fecha' in df.columns:
@@ -60,6 +67,8 @@ def cargar_datos(file_path):
         df['Fecha_Clean'] = pd.NaT
 
     agg_dict = {
+        'Calle_Nombre': ('Calle', 'first'),
+        'Cuadra_Texto': ('Cuadra_Texto', 'first'),
         'Cant_Inspecciones': ('Calle', 'count'),
         'Total_TREL': ('TREL', 'sum') if 'TREL' in df.columns else ('Calle', 'count'),
         'Total_TNR': ('TNR', 'sum') if 'TNR' in df.columns else ('Calle', 'count'),
@@ -75,11 +84,11 @@ def cargar_datos(file_path):
     # Semáforo de Prioridad
     def asignar_prioridad(row):
         if row['Cant_Inspecciones'] == 1 and row['% Informalidad'] > 50:
-            return "🔴 ALTA (Urgente Refiscalizar)"
+            return "🔴 ALTA (1 sola insp. y alta inf.)"
         elif row['Cant_Inspecciones'] <= 2:
-            return "🟡 MEDIA (Control Periódico)"
+            return "🟡 MEDIA (1-2 inspecciones)"
         else:
-            return "🟢 BAJA (Al día)"
+            return "🟢 BAJA (3+ inspecciones - Evitar)"
             
     resumen['Prioridad'] = resumen.apply(asignar_prioridad, axis=1)
     return df, resumen
@@ -100,7 +109,7 @@ if resumen is not None:
         st.caption("Visión sintética de la tasa de informalidad e inspecciones en calle.")
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Totales Locales", len(resumen))
+        c1.metric("Total Locales", len(resumen))
         c2.metric("Total Inspecciones", resumen['Cant_Inspecciones'].sum())
         c3.metric("Prom. Informalidad", f"{resumen['% Informalidad'].mean():.1f}%")
         c4.metric("Urgentes Refiscalizar", len(resumen[resumen['Prioridad'].str.contains("ALTA")]))
@@ -108,18 +117,64 @@ if resumen is not None:
         st.divider()
         col_left, col_right = st.columns(2)
         with col_left:
-            st.subheader("Distribución por Prioridad de Control")
+            st.subheader("Distribución por Cantidad de Inspecciones")
             st.bar_chart(resumen['Prioridad'].value_counts())
         with col_right:
             st.subheader("Top 10 Zonas con Mayor Informalidad")
             top_inf = resumen.sort_values(by='% Informalidad', ascending=False).head(10)
             st.dataframe(top_inf[['Direccion_Corta', '% Informalidad', 'Cant_Inspecciones']], use_container_width=True)
 
-    # --- SECCIÓN 2: CONSULTAR FICHA POR LOCAL ---
+    # --- SECCIÓN NUEVA: ANÁLISIS POR CALLE / CUADRA ---
+    elif opcion == "🛣️ Análisis por Calle / Cuadra":
+        st.title("🛣️ Control por Calle y Cuadras")
+        st.write("Identificá qué cuadras o calles tienen sobreinspección y cuáles faltan recorrer.")
+
+        lista_calles = sorted([c for c in resumen['Calle_Nombre'].unique() if str(c).strip() != ''])
+        calle_sel = st.selectbox("Seleccioná o buscá una Calle:", [""] + lista_calles)
+
+        if calle_sel:
+            df_calle = resumen[resumen['Calle_Nombre'].str.upper() == calle_sel.upper()]
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Calle", calle_sel)
+            m2.metric("Total Locales", len(df_calle))
+            m3.metric("Total Inspecciones en la Calle", df_calle['Cant_Inspecciones'].sum())
+            m4.metric("Prom. Inspecciones por Local", f"{(df_calle['Cant_Inspecciones'].sum() / len(df_calle)):.1f}")
+
+            st.divider()
+
+            col_cuadra, col_locales = st.columns([1, 1.2])
+
+            with col_cuadra:
+                st.subheader("📌 Inspecciones por Cuadra (Altura)")
+                resumen_cuadra = df_calle.groupby('Cuadra_Texto').agg(
+                    Locales=('Direccion_Corta', 'count'),
+                    Inspecciones=('Cant_Inspecciones', 'sum'),
+                    Prom_Informalidad=('% Informalidad', 'mean')
+                ).reset_index().sort_values(by='Inspecciones', ascending=False)
+                
+                st.dataframe(resumen_cuadra, use_container_width=True)
+
+            with col_locales:
+                st.subheader("🏪 Locales de la Calle (Ordenados por Inspección)")
+                filtro_cant = st.radio("Mostrar:", ["Todos", "Solo 1 inspección (Prioridad)", "2 o más inspecciones (Evitar/Analizar)"], horizontal=True)
+
+                df_mostrar = df_calle.copy()
+                if filtro_cant == "Solo 1 inspección (Prioridad)":
+                    df_mostrar = df_mostrar[df_mostrar['Cant_Inspecciones'] == 1]
+                elif filtro_cant == "2 o más inspecciones (Evitar/Analizar)":
+                    df_mostrar = df_mostrar[df_mostrar['Cant_Inspecciones'] >= 2]
+
+                st.dataframe(
+                    df_mostrar[['Direccion_Corta', 'Cant_Inspecciones', '% Informalidad', 'Prioridad']].sort_values(by='Cant_Inspecciones', ascending=True),
+                    use_container_width=True
+                )
+
+    # --- SECCIÓN 3: CONSULTAR FICHA POR LOCAL ---
     elif opcion == "🔍 Consultar Ficha por Local":
         st.title("🔍 Buscador Interactivo de Comercio")
         
-        busqueda = st.selectbox("Seleccioná o buscá una dirección:", [""] + list(resumen['Direccion_Corta'].unique()))
+        busqueda = st.selectbox("Seleccioná o buscá una dirección exacta:", [""] + list(resumen['Direccion_Corta'].unique()))
         
         if busqueda:
             local = resumen[resumen['Direccion_Corta'] == busqueda].iloc[0]
@@ -136,7 +191,7 @@ if resumen is not None:
             historial = df_raw[df_raw['Direccion_Corta'] == busqueda]
             st.dataframe(historial, use_container_width=True)
 
-    # --- SECCIÓN 3: TABLERO DE PRIORIDADES ---
+    # --- SECCIÓN 4: TABLERO DE PRIORIDADES ---
     elif opcion == "🔴 Tablero de Prioridades":
         st.title("🔴 Tablero de Refiscalización Prioritaria")
         
@@ -148,11 +203,11 @@ if resumen is not None:
         
         res_filtrado = resumen[resumen['Prioridad'].isin(prio_filtro)]
         st.dataframe(
-            res_filtrado.sort_values(by=['% Informalidad', 'Cant_Inspecciones'], ascending=[False, True]),
+            res_filtrado.sort_values(by=['Cant_Inspecciones', '% Informalidad'], ascending=[True, False]),
             use_container_width=True
         )
 
-    # --- SECCIÓN 4: MAPA DE CONTROL ---
+    # --- SECCIÓN 5: MAPA DE CONTROL ---
     elif opcion == "🗺️ Mapa de Control":
         st.title("🗺️ Ubicación de Inspecciones")
         if 'Latitud' in resumen.columns and 'Longitud' in resumen.columns:
@@ -174,7 +229,7 @@ if resumen is not None:
         else:
             st.info("El archivo actual no posee datos de Latitud y Longitud.")
 
-    # --- SECCIÓN 5: CARGA Y CONFIGURACIÓN ---
+    # --- SECCIÓN 6: CARGA Y CONFIGURACIÓN ---
     elif opcion == "⚙️ Carga y Configuración":
         st.title("⚙️ Carga y Actualización de Archivos")
         up = st.file_uploader("Subí un nuevo Excel para actualizar el sistema", type=["xlsx", "xls"])
