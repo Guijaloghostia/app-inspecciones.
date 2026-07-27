@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import os
 
-st.set_page_config(Refiscalizaciones="Control de Refiscalización", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Refiscalizaciones", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
     """
     <style>
