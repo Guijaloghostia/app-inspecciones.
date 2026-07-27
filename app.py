@@ -3,6 +3,29 @@ import pandas as pd
 import os
 
 st.set_page_config(page_title="Control de Refiscalización", layout="wide", initial_sidebar_state="expanded")
+st.markdown(
+    """
+    <style>
+        /* Agranda el texto de los elementos de la barra lateral / menú */
+        [data-testid="stSidebar"] * {
+            font-size: 20px !important;
+        }
+
+        /* Agranda los títulos del menú */
+        [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+            font-size: 24px !important;
+        }
+
+        /* Agranda los botones de la barra lateral y de la app */
+        .stButton button {
+            font-size: 18px !important;
+        }
+    </style>
+""",
+    unsafe_allow_html=True,
+)
+
+
 
 # --- ESTILOS CSS INTERACTIVOS ---
 st.markdown("""
